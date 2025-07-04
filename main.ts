@@ -2,7 +2,6 @@ import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Set
 import { TFile, normalizePath } from 'obsidian';
 import { exec } from 'child_process';
 import { WishlistTemplate } from './Scripts/Wishlist';
-import { FileOperations } from './test-vault/test-vault/file-operations';
 import { TemplateMetadata } from './Template';
 import * as fs from 'fs';
 
@@ -23,12 +22,10 @@ interface DiscoveredTemplateMetadata {
 }
 
 interface ObsidianDynamicTemplatesSettings {
-	mySetting: string;
 	scriptsDirectory: string;
 }
 
 const DEFAULT_SETTINGS: ObsidianDynamicTemplatesSettings = {
-	mySetting: 'default',
 	scriptsDirectory: 'Scripts'
 }
 
@@ -132,6 +129,31 @@ export default class ObsidianDynamicTemplatesPlugin extends Plugin {
 			}
 		};
 		registerDynamicTemplateCommands.call(this);
+
+		// Add command to create file from template with manual URL input
+		this.addCommand({
+			id: 'create-file-from-template',
+			name: 'Create file from template',
+			callback: async () => {
+				await this.showTemplateSelectionModal();
+			}
+		});
+
+		// Add command to update wishlist status based on checkbox
+		this.addCommand({
+			id: 'update-wishlist-status',
+			name: 'Update Wishlist Status',
+			checkCallback: (checking: boolean) => {
+				const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
+				if (activeView) {
+					if (!checking) {
+						this.updateWishlistStatus(activeView);
+					}
+					return true;
+				}
+				return false;
+			}
+		});
 	}
 
 	onunload() {
@@ -175,9 +197,15 @@ export default class ObsidianDynamicTemplatesPlugin extends Plugin {
 			const templateClassName = `${type.charAt(0).toUpperCase() + type.slice(1)}Template`;
 			
 			try {
-				// Try to load template class
-				const templateModule = await import(`./${this.settings.scriptsDirectory}/${templateFile}`);
-				const TemplateClass = templateModule[templateClassName];
+				// Try to load template class using require instead of dynamic import
+				let templateModule, TemplateClass;
+				try {
+					templateModule = require(`./${this.settings.scriptsDirectory}/${templateFile}`);
+					TemplateClass = templateModule[templateClassName];
+				} catch (e) {
+					console.error(`Failed to load template module ${templateFile}:`, e);
+					throw e;
+				}
 				
 				if (TemplateClass) {
 					const templateInstance = new TemplateClass();
@@ -250,6 +278,180 @@ export default class ObsidianDynamicTemplatesPlugin extends Plugin {
 			new Notice(`❌ Failed to create resource file for type=${type} (fallback)`);
 		}
 	}
+
+	// Method to update wishlist status based on checkbox state
+	async updateWishlistStatus(view: MarkdownView) {
+		const file = view.file;
+		if (!file) return;
+
+		const content = await this.app.vault.read(file);
+		const cache = this.app.metadataCache.getFileCache(file);
+		
+		// Check if this is a wishlist file
+		const frontmatter = cache?.frontmatter;
+		if (!frontmatter || !frontmatter.tags || !frontmatter.tags.includes('wishlist')) {
+			new Notice('This command only works on wishlist files');
+			return;
+		}
+
+		// Look for the checkbox in the content
+		const checkboxRegex = /^- \[([ x])\] Mark as Inactive/m;
+		const match = content.match(checkboxRegex);
+		
+		if (!match) {
+			new Notice('Could not find status checkbox in this wishlist item');
+			return;
+		}
+
+		const isChecked = match[1] === 'x';
+		const newStatus = isChecked ? 'Inactive' : 'Active';
+		
+		// Update frontmatter status
+		const frontmatterRegex = /^---\n([\s\S]*?)\n---/;
+		const frontmatterMatch = content.match(frontmatterRegex);
+		
+		if (frontmatterMatch) {
+			const frontmatterContent = frontmatterMatch[1];
+			const statusRegex = /^status: .+$/m;
+			
+			let newFrontmatter;
+			if (statusRegex.test(frontmatterContent)) {
+				newFrontmatter = frontmatterContent.replace(statusRegex, `status: ${newStatus}`);
+			} else {
+				newFrontmatter = frontmatterContent + `\nstatus: ${newStatus}`;
+			}
+			
+			const newContent = content.replace(frontmatterRegex, `---\n${newFrontmatter}\n---`);
+			
+			// Also update the status in the Details section
+			const detailsStatusRegex = /(\*\*Status:\*\* ).+/;
+			const finalContent = newContent.replace(detailsStatusRegex, `$1${newStatus}`);
+			
+			await this.app.vault.modify(file, finalContent);
+			new Notice(`Wishlist status updated to: ${newStatus}`);
+		} else {
+			new Notice('Could not find frontmatter in this file');
+		}
+	}
+
+	// Method to show template selection modal and create file with manual URL input
+	async showTemplateSelectionModal() {
+		try {
+			// Import modal utilities
+			const { createSelectPromptModal, promptWithRetry } = await import('./modals');
+			
+			// Get available templates by scanning the scripts directory
+			const scriptsDir = `./${this.settings.scriptsDirectory}`;
+			let templateFiles: string[] = [];
+			try {
+				const fs = require('fs');
+				templateFiles = fs.readdirSync(scriptsDir).filter((f: string) => f.endsWith('.js'));
+			} catch (e) {
+				new Notice('Failed to scan Scripts folder for templates.');
+				console.error(e);
+				return;
+			}
+
+			if (templateFiles.length === 0) {
+				new Notice('No templates found in Scripts directory');
+				return;
+			}
+
+			// Create options for the dropdown
+			const templateOptions = [];
+			for (const file of templateFiles) {
+				const type = file.replace('.js', '');
+				const templateClassName = `${type.charAt(0).toUpperCase() + type.slice(1)}Template`;
+				
+				try {
+					// Try to load template class to get metadata
+					const templateModule = require(`./${this.settings.scriptsDirectory}/${file}`);
+					const TemplateClass = templateModule[templateClassName];
+					
+					if (TemplateClass) {
+						const templateInstance = new TemplateClass();
+						let displayName = type;
+						
+						// Try to get a better display name from metadata
+						try {
+							if (templateInstance.getMetadata) {
+								const metadata = templateInstance.getMetadata();
+								displayName = metadata.name || type;
+							}
+						} catch (e) {
+							// Use default name if metadata fails
+						}
+						
+						templateOptions.push({
+							value: type,
+							text: displayName
+						});
+					}
+				} catch (e) {
+					console.error(`Failed to load template ${type}:`, e);
+					// Still add it as an option with basic name
+					templateOptions.push({
+						value: type,
+						text: type
+					});
+				}
+			}
+
+			if (templateOptions.length === 0) {
+				new Notice('No valid templates found');
+				return;
+			}
+
+			// Show template selection modal
+			const selectedType = await promptWithRetry(
+				(args) => createSelectPromptModal(args),
+				{
+					app: this.app,
+					message: 'Select template type:',
+					options: templateOptions,
+					defaultValue: templateOptions[0].value
+				},
+				'ObsidianDynamicTemplatesPlugin.showTemplateSelectionModal'
+			);
+
+			if (!selectedType) return;
+
+			// Load the selected template and call createManualTemplate
+			const templateFile = `${selectedType}.js`;
+			const templateClassName = `${selectedType.charAt(0).toUpperCase() + selectedType.slice(1)}Template`;
+			
+			try {
+				const templateModule = require(`./${this.settings.scriptsDirectory}/${templateFile}`);
+				const TemplateClass = templateModule[templateClassName];
+				
+				if (TemplateClass) {
+					const templateInstance = new TemplateClass();
+					
+					// Validate template metadata if validation methods exist
+					if (templateInstance.validateMetadata && !templateInstance.validateMetadata()) {
+						new Notice(`Template ${selectedType} failed metadata validation`);
+						return;
+					}
+					
+					// Use the manual template creation method
+					const result = await templateInstance.createManualTemplate(this.app, selectedType);
+					if (result) {
+						new Notice(`✅ ${selectedType} file created successfully`);
+					} else {
+						new Notice(`❌ Failed to create ${selectedType} file`);
+					}
+				} else {
+					throw new Error(`Template class ${templateClassName} not found`);
+				}
+			} catch (e) {
+				new Notice(`Failed to load template ${selectedType}: ${e.message}`);
+				console.error(e);
+			}
+		} catch (error) {
+			new Notice(`Error showing template selection: ${error.message}`);
+			console.error(error);
+		}
+	}
 }
 
 class SampleModal extends Modal {
@@ -280,17 +482,6 @@ class ObsidianDynamicTemplatesSettingTab extends PluginSettingTab {
 		const {containerEl} = this;
 
 		containerEl.empty();
-
-		new Setting(containerEl)
-			.setName('Setting #1')
-			.setDesc('It\'s a secret')
-			.addText(text => text
-				.setPlaceholder('Enter your secret')
-				.setValue(this.plugin.settings.mySetting)
-				.onChange(async (value) => {
-					this.plugin.settings.mySetting = value;
-					await this.plugin.saveSettings();
-				}));
 
 		new Setting(containerEl)
 			.setName('Scripts Directory')

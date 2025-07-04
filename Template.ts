@@ -31,12 +31,60 @@ export abstract class Template {
      * Throws an error if any are missing or empty.
      */
     abstract createTemplatedFile(app: App, params: { title: string, url: string, type: string, [key: string]: any }): Promise<boolean>;
-    abstract promptForFields(app: App, prefilledTitle: string): Promise<any>;
+    abstract promptForFields(app: App, prefilledTitle?: string, prefilledUrl?: string): Promise<any>;
     
     /**
      * Abstract: must be implemented by subclasses to provide template metadata
      */
     abstract getMetadata(): TemplateMetadata;
+
+    /**
+     * Manual template creation with URL input prompt
+     * This is the ONLY time users can input a URL manually
+     */
+    async createManualTemplate(app: App, selectedType: string): Promise<boolean> {
+        try {
+            // Import modal utilities
+            const { createTextPromptModal, promptWithRetry } = require('./modals');
+            
+            // 1. Prompt for URL
+            const url = await promptWithRetry(
+                (args: any) => createTextPromptModal(args),
+                { app, message: '🌐 Enter URL:', placeholder: 'https://...' },
+                'Template.createManualTemplate'
+            );
+            if (!url) return false;
+            
+            // 2. Prompt for title
+            const title = await promptWithRetry(
+                async (args: any) => {
+                    const val = await createTextPromptModal(args);
+                    if (!val || val.trim() === '') throw new Error('Title cannot be empty');
+                    return val;
+                },
+                { app, message: '📝 Enter title:', placeholder: 'Enter title...' },
+                'Template.createManualTemplate'
+            );
+            if (!title) return false;
+            
+            // 3. Run the regular prompt flow with prefilled values
+            const userInputs = await this.promptForFields(app, title, url);
+            if (!userInputs) return false;
+            
+            // 4. Create the templated file using the standard flow
+            const params = {
+                title,
+                url,
+                type: selectedType,
+                ...userInputs
+            };
+            
+            return await this.createTemplatedFile(app, params);
+        } catch (error) {
+            handleError(error, 'Template.createManualTemplate');
+            return false;
+        }
+    }
 
     // Utility to enforce required params
     protected static enforceTitleUrlType(params: { title?: string, url?: string, type?: string }) {

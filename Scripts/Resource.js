@@ -1,4 +1,4 @@
-import { promptForTitle, promptForTags, promptForImportance, promptForDescription, promptWithRetry } from '../modals';
+import { promptForTitle, promptForTags, promptForImportance, promptForDescription, promptWithRetry, createSelectPromptModal } from '../modals';
 import { Template } from '../Template';
 import { handleError, InputError } from '../errors';
 
@@ -40,7 +40,7 @@ export class ResourceTemplate extends Template {
             version: '1.0.0',
             requiredFields: ['title', 'url', 'type'],
             optionalFields: ['tags', 'importance', 'description'],
-            supportedTypes: ['resources', 'bookmarks', 'articles', 'links']
+            supportedTypes: ['article', 'bookmark', 'tutorial', 'documentation', 'video', 'tool', 'reference', 'research']
         };
     }
 
@@ -52,14 +52,14 @@ export class ResourceTemplate extends Template {
                 throw new InputError('Missing required parameter: type');
             }
             // Step 1: Complete prompt flow first
-            const userInputs = await this.promptForFields(app, title);
+            const userInputs = await this.promptForFields(app, title, url);
             if (!userInputs) return false; // User cancelled
 
             // Step 2: Instantiate template after all prompts are complete
             let template = this.RESOURCE_TEMPLATE;
 
             // Step 3: Fill in all fields (both parameterized and prompted)
-            const { title: finalTitle, tags, importance, description } = userInputs;
+            const { title: finalTitle, resourceType, tags, importance, description } = userInputs;
             const now = new Date().toISOString();
             const creationDate = now.split('T')[0];
             const generatedOn = new Date().toISOString().replace('T', ' ').split('.')[0];
@@ -69,7 +69,7 @@ export class ResourceTemplate extends Template {
             template = template
                 .replace(/{{URL}}/g, url)
                 .replace(/{{TITLE}}/g, finalTitle)
-                .replace(/{{TAGS}}/g, tags.length ? ', ' + tags.join(', ') : '')
+                .replace(/{{TAGS}}/g, resourceType ? ', ' + resourceType + (tags.length ? ', ' + tags.join(', ') : '') : (tags.length ? ', ' + tags.join(', ') : ''))
                 .replace(/{{IMPORTANCE}}/g, importance.toString())
                 .replace(/{{IMPORTANCE_TEXT}}/g, importanceText)
                 .replace(/{{IMPORTANCE_STARS}}/g, importanceStars)
@@ -87,7 +87,7 @@ export class ResourceTemplate extends Template {
         }
     }
 
-    async promptForFields(app, prefilledTitle) {
+    async promptForFields(app, prefilledTitle = '', prefilledUrl = '') {
         try {
             const title = await promptWithRetry(
                 async (args) => {
@@ -99,6 +99,31 @@ export class ResourceTemplate extends Template {
                 'ResourceTemplate.promptForFields'
             );
             if (!title) return null;
+
+            // Prompt for specific resource type
+            const resourceType = await promptWithRetry(
+                (args) => createSelectPromptModal({
+                    app: args.app,
+                    title: 'Select Resource Type',
+                    message: 'What type of resource is this?',
+                    options: [
+                        { value: 'article', text: '📄 Article' },
+                        { value: 'bookmark', text: '🔖 Bookmark' },
+                        { value: 'tutorial', text: '📚 Tutorial' },
+                        { value: 'documentation', text: '📋 Documentation' },
+                        { value: 'video', text: '🎥 Video' },
+                        { value: 'tool', text: '🔧 Tool' },
+                        { value: 'reference', text: '📖 Reference' },
+                        { value: 'research', text: '🔬 Research' }
+                    ],
+                    defaultValue: 'article',
+                    buttonText: 'Next'
+                }),
+                { app },
+                'ResourceTemplate.promptForFields'
+            );
+            if (resourceType === null) return null;
+
             const tags = await promptWithRetry(
                 (args) => promptForTags(args.app),
                 { app },
@@ -117,7 +142,7 @@ export class ResourceTemplate extends Template {
                 'ResourceTemplate.promptForFields'
             );
             if (description === null) return null;
-            return { title, tags, importance, description };
+            return { title, resourceType, tags, importance, description };
         } catch (error) {
             handleError(error, 'ResourceTemplate.promptForFields');
             return null;
