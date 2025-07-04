@@ -5,7 +5,6 @@
     "inlineSources": true,
     "module": "ESNext",
     "target": "ES6",
-    "allowJs": true,
     "noImplicitAny": true,
     "moduleResolution": "node",
     "importHelpers": true,
@@ -19,9 +18,15 @@
     ]
   },
   "include": [
-    "**/*.ts"
+    "main.ts",
+    "Template.ts",
+    "modals.ts",
+    "errors.ts",
+    "Scripts/*.ts"
   ],
   "exclude": [
-    "test-vault"
+    "test-vault",
+    "tests",
+    "node_modules"
   ]
 } 

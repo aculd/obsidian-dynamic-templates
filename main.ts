@@ -1,6 +1,7 @@
 import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting } from 'obsidian';
 import { TFile, normalizePath } from 'obsidian';
 import { exec } from 'child_process';
+// @ts-ignore
 import { WishlistTemplate } from './Scripts/Wishlist';
 import { TemplateMetadata } from './Template';
 import * as fs from 'fs';
