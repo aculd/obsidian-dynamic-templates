@@ -1,29 +1,43 @@
-# --- Non-critical, generated, and test files ---
-# Ignore all test vaults and their contents
-/test-vault/
-
-# Ignore plugin build/test scripts (if not source)
-/Scripts/
-
-# Ignore ESLint config (not critical for runtime)
-.eslintrc.cjs
-
-# Ignore test markdown files
-*.md
-
-# Ignore Obsidian workspace and plugin state in test vault
-/test-vault/test-vault/.obsidian/
-
-# Ignore package lock if not needed for reproducible builds
-# package-lock.json
-
-# --- Existing rules below ---
-# Dependencies
-node_modules/
-
+# --- Obsidian Plugin Specific ---
 # Build output
 main.js
 main.js.map
+
+# Test vaults and their contents
+/test-vault/
+**/test-vault/
+**/.obsidian/workspace*
+**/.obsidian/hotkeys.json
+**/.obsidian/core-plugins.json
+**/.obsidian/community-plugins.json
+
+# Plugin data files (user-specific)
+data.json
+*.json.bak
+
+# Plugin distribution files
+*.zip
+plugin.zip
+release/
+dist/
+
+# Development and testing files
+*.test.js
+*.test.ts
+*.spec.js
+*.spec.ts
+/test/
+/tests/
+
+# ESLint config (can be regenerated)
+.eslintrc.*
+
+# --- Standard Node.js / TypeScript ---
+# Dependencies
+node_modules/
+
+# TypeScript build info
+*.tsbuildinfo
 
 # IDE files
 .vscode/
@@ -72,4 +86,41 @@ jspm_packages/
 .yarn-integrity
 
 # dotenv environment variables file
-.env 
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Temporary files
+*.tmp
+*.temp
+*~
+
+# Archive files (excluding plugin distribution)
+*.tar.gz
+*.rar
+
+# Editor backup files
+*~
+.#*
+\#*#
+.*.swp
+.*.swo
+
+# Windows specific
+desktop.ini
+$RECYCLE.BIN/
+
+# macOS specific
+.AppleDouble
+.LSOverride
+Icon?
+
+# Linux specific
+*~
+.fuse_hidden*
+.directory
+.Trash-*
+DEVELOPMENT.md
+LEARNING-EXERCISE.md

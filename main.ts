@@ -2,76 +2,46 @@ import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Set
 import { TFile, normalizePath } from 'obsidian';
 import { exec } from 'child_process';
 import { WishlistTemplate } from './Scripts/Wishlist';
+import { FileOperations } from './test-vault/test-vault/file-operations';
+import { TemplateMetadata } from './Template';
 import * as fs from 'fs';
 
-// Remember to rename these classes and interfaces!
+// Type definitions for better type safety
+interface UrlParams {
+	type?: string | string[];
+	url?: string | string[];
+	title?: string | string[];
+	[key: string]: string | string[] | undefined;
+}
 
-interface ObsidianUriHandlerSettings {
+interface DiscoveredTemplateMetadata {
+	name: string;
+	description?: string;
+	className: string;
+	filePath: string;
+	templateMetadata?: TemplateMetadata;
+}
+
+interface ObsidianDynamicTemplatesSettings {
 	mySetting: string;
+	scriptsDirectory: string;
 }
 
-const DEFAULT_SETTINGS: ObsidianUriHandlerSettings = {
-	mySetting: 'default'
+const DEFAULT_SETTINGS: ObsidianDynamicTemplatesSettings = {
+	mySetting: 'default',
+	scriptsDirectory: 'Scripts'
 }
 
-export default class ObsidianUriHandlerPlugin extends Plugin {
-	settings: ObsidianUriHandlerSettings;
-	urlParams: Record<string, string>;
+export default class ObsidianDynamicTemplatesPlugin extends Plugin {
+	settings: ObsidianDynamicTemplatesSettings;
+	urlParams: Record<string, string | string[]>;
+	private templates: DiscoveredTemplateMetadata[] = [];
 
 	async onload() {
 		await this.loadSettings();
 
-		// This creates an icon in the left ribbon.
-		const ribbonIconEl = this.addRibbonIcon('dice', 'Obsidian URI Handler', (evt: MouseEvent) => {
-			// Called when the user clicks the icon.
-			new Notice('This is a notice!');
-		});
-		// Perform additional things with the ribbon
-		ribbonIconEl.addClass('my-plugin-ribbon-class');
-
-		// This adds a status bar item to the bottom of the app. Does not work on mobile apps.
-		const statusBarItemEl = this.addStatusBarItem();
-		statusBarItemEl.setText('Status Bar Text');
-
-		// This adds a simple command that can be triggered anywhere
-		this.addCommand({
-			id: 'open-sample-modal-simple',
-			name: 'Open sample modal (simple)',
-			callback: () => {
-				new SampleModal(this.app).open();
-			}
-		});
-		// This adds an editor command that can perform some operation on the current editor instance
-		this.addCommand({
-			id: 'sample-editor-command',
-			name: 'Sample editor command',
-			editorCallback: (editor: Editor, view: MarkdownView) => {
-				console.log(editor.getSelection());
-				editor.replaceSelection('Sample Editor Command');
-			}
-		});
-		// This adds a complex command that can check whether the current state of the app allows execution of the command
-		this.addCommand({
-			id: 'open-sample-modal-complex',
-			name: 'Open sample modal (complex)',
-			checkCallback: (checking: boolean) => {
-				// Conditions to check
-				const markdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
-				if (markdownView) {
-					// If checking is true, we're simply "checking" if the command can be run.
-					// If checking is false, then we want to actually perform the operation.
-					if (!checking) {
-						new SampleModal(this.app).open();
-					}
-
-					// This command will only show up in Command Palette when the check function returns true
-					return true;
-				}
-			}
-		});
-
 		// This adds a settings tab so the user can configure various aspects of the plugin
-		this.addSettingTab(new ObsidianUriHandlerSettingTab(this.app, this));
+		this.addSettingTab(new ObsidianDynamicTemplatesSettingTab(this.app, this));
 
 		// If the plugin hooks up any global DOM events (on parts of the app that doesn't belong to this plugin)
 		// Using this function will automatically remove the event listener when this plugin is disabled.
@@ -84,7 +54,7 @@ export default class ObsidianUriHandlerPlugin extends Plugin {
 
 		// Register a URL handler to store all params with their key and value
 		this.urlParams = {};
-		this.registerObsidianProtocolHandler('obsidian-uri-handler', async (params) => {
+		this.registerObsidianProtocolHandler('obsidian-dynamic-templates', async (params) => {
 			try {
 				await this.handleUrlParams(params);
 			} catch (e) {
@@ -94,7 +64,7 @@ export default class ObsidianUriHandlerPlugin extends Plugin {
 
 		// Dynamic Template Discovery and Command Registration
 		const registerDynamicTemplateCommands = () => {
-			const scriptsDir = './Scripts';
+			const scriptsDir = `./${this.settings.scriptsDirectory}`;
 			let templateFiles: string[] = [];
 			try {
 				templateFiles = fs.readdirSync(scriptsDir).filter(f => f.endsWith('.js'));
@@ -115,17 +85,43 @@ export default class ObsidianUriHandlerPlugin extends Plugin {
 					continue;
 				}
 				if (TemplateClass) {
+					// Try to validate template and get metadata
+					let templateMetadata: TemplateMetadata | undefined;
+					try {
+						const templateInstance = new TemplateClass();
+						if (templateInstance.validateMetadata && templateInstance.validateMetadata()) {
+							templateMetadata = templateInstance.getMetadata();
+						}
+					} catch (error) {
+						console.error(`Failed to validate template ${type}:`, error);
+					}
+
 					this.addCommand({
 						id: `create-${type.toLowerCase()}-file-dynamic`,
 						name: `Create ${type} File (Dynamic)`,
 						callback: async () => {
 							try {
 								const templateInstance = new TemplateClass();
-								await templateInstance.createTemplatedFile(this.app, {
+								
+								// Validate template if validation methods exist
+								if (templateInstance.validateMetadata && !templateInstance.validateMetadata()) {
+									new Notice(`Template ${type} failed metadata validation`);
+									return;
+								}
+								
+								const params = {
 									title: `${type} Example`,
 									url: 'https://example.com',
 									type
-								});
+								};
+								
+								// Validate parameters if validation method exists
+								if (templateInstance.validateParams && !templateInstance.validateParams(params)) {
+									new Notice(`Template ${type} failed parameter validation`);
+									return;
+								}
+								
+								await templateInstance.createTemplatedFile(this.app, params);
 							} catch (e) {
 								new Notice(`Failed to create ${type} file: ${e.message}`);
 								console.error(e);
@@ -161,8 +157,11 @@ export default class ObsidianUriHandlerPlugin extends Plugin {
 	}
 
 	// Shared method to handle URL params and call createUrlFileWithParams
-	async handleUrlParams(params: Record<string, any>) {
-		this.urlParams = { ...params };
+	async handleUrlParams(params: UrlParams) {
+		// Filter out undefined values and store params
+		this.urlParams = Object.fromEntries(
+			Object.entries(params).filter(([_, value]) => value !== undefined)
+		) as Record<string, string | string[]>;
 		new Notice('URL params received and stored.');
 
 		// Normalize parameters: if any are arrays, use the first value
@@ -171,38 +170,84 @@ export default class ObsidianUriHandlerPlugin extends Plugin {
 		const title = Array.isArray(params.title) ? params.title[0] : params.title;
 
 		if (type && url && title) {
-			let createUrlFile;
-			let found = false;
+			// Try to find and use a template for this type
+			const templateFile = `${type}.js`;
+			const templateClassName = `${type.charAt(0).toUpperCase() + type.slice(1)}Template`;
+			
 			try {
-				// Try to load from local Scripts folder first
-				createUrlFile = require('./Scripts/create-url-file.js').createUrlFileWithParams;
-				found = true;
-			} catch (e) {
-				console.log('Script not found in local Scripts folder:', e.message);
-			}
-			if (!found) {
-				try {
-					// Try to load from vault Scripts folder
-					const vaultPath = (this.app.vault.adapter as any).basePath;
-					const scriptPath = `${vaultPath}/Scripts/create-url-file.js`;
-					createUrlFile = require(scriptPath).createUrlFileWithParams;
-					found = true;
-				} catch (e) {
-					console.log('Script not found in vault Scripts folder:', e.message);
+				// Try to load template class
+				const templateModule = await import(`./${this.settings.scriptsDirectory}/${templateFile}`);
+				const TemplateClass = templateModule[templateClassName];
+				
+				if (TemplateClass) {
+					const templateInstance = new TemplateClass();
+					
+					// Validate template metadata if validation methods exist
+					if (templateInstance.validateMetadata && !templateInstance.validateMetadata()) {
+						new Notice(`Template ${type} failed metadata validation`);
+						return;
+					}
+					
+					const templateParams = { type, url, title };
+					
+					// Validate parameters if validation method exists
+					if (templateInstance.validateParams && !templateInstance.validateParams(templateParams)) {
+						new Notice(`Template ${type} failed parameter validation`);
+						return;
+					}
+					
+					// Use the template to create the file
+					const result = await templateInstance.createTemplatedFile(this.app, templateParams);
+					if (result) {
+						new Notice(`✅ Resource file created successfully for type=${type}`);
+					} else {
+						new Notice(`❌ Failed to create resource file for type=${type}`);
+					}
+				} else {
+					throw new Error(`Template class ${templateClassName} not found`);
 				}
-			}
-			if (!found) {
-				throw new Error('create-url-file.js not found in ./Scripts or VAULT_PATH/Scripts');
-			}
-			// Call the function with the proper parameters object structure
-			const result = await createUrlFile(this.app, { type, url, title });
-			if (result) {
-				new Notice(`✅ Resource file created successfully for type=${type}`);
-			} else {
-				new Notice(`❌ Failed to create resource file for type=${type}`);
+			} catch (e) {
+				console.error(`Failed to use template for type ${type}:`, e);
+				// Fallback to old method
+				await this.fallbackCreateUrlFile(type, url, title);
 			}
 		} else {
 			new Notice('❌ Missing required parameters: type, url, title');
+		}
+	}
+
+	// Fallback method for when template-based creation fails
+	async fallbackCreateUrlFile(type: string, url: string, title: string) {
+		let createUrlFile;
+		let found = false;
+		try {
+			// Try to load from local Scripts folder first
+			createUrlFile = require(`./${this.settings.scriptsDirectory}/create-url-file.js`).createUrlFileWithParams;
+			found = true;
+		} catch (e) {
+			console.log('Script not found in local Scripts folder:', e.message);
+		}
+		if (!found) {
+			try {
+				// Try to load from vault Scripts folder
+				const vaultPath = (this.app.vault.adapter as any).basePath;
+				const scriptPath = `${vaultPath}/${this.settings.scriptsDirectory}/create-url-file.js`;
+				createUrlFile = require(scriptPath).createUrlFileWithParams;
+				found = true;
+			} catch (e) {
+				console.log('Script not found in vault Scripts folder:', e.message);
+			}
+		}
+		if (!found) {
+			new Notice('❌ No template or fallback script found for this type');
+			return;
+		}
+		// Call the function with the proper parameters object structure
+		const result = await createUrlFile(this.app, { type, url, title });
+		if (result) {
+			new Notice(`✅ Resource file created successfully for type=${type} (fallback)`);
+		} else {
+			new Notice(`❌ Failed to create resource file for type=${type} (fallback)`);
 		}
 	}
 }
@@ -223,10 +268,10 @@ class SampleModal extends Modal {
 	}
 }
 
-class ObsidianUriHandlerSettingTab extends PluginSettingTab {
-	plugin: ObsidianUriHandlerPlugin;
+class ObsidianDynamicTemplatesSettingTab extends PluginSettingTab {
+	plugin: ObsidianDynamicTemplatesPlugin;
 
-	constructor(app: App, plugin: ObsidianUriHandlerPlugin) {
+	constructor(app: App, plugin: ObsidianDynamicTemplatesPlugin) {
 		super(app, plugin);
 		this.plugin = plugin;
 	}
@@ -244,6 +289,17 @@ class ObsidianUriHandlerSettingTab extends PluginSettingTab {
 				.setValue(this.plugin.settings.mySetting)
 				.onChange(async (value) => {
 					this.plugin.settings.mySetting = value;
+					await this.plugin.saveSettings();
+				}));
+
+		new Setting(containerEl)
+			.setName('Scripts Directory')
+			.setDesc('Directory where template scripts are located (relative to plugin folder)')
+			.addText(text => text
+				.setPlaceholder('Scripts')
+				.setValue(this.plugin.settings.scriptsDirectory)
+				.onChange(async (value) => {
+					this.plugin.settings.scriptsDirectory = value || 'Scripts';
 					await this.plugin.saveSettings();
 				}));
 	}

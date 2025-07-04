@@ -7,11 +7,5 @@
 	"author": "Your Name",
 	"authorUrl": "https://github.com/aculd",
 	"isDesktopOnly": false,
-	"commands": [
-		{
-			"id": "test-create-file",
-			"name": "Test: Create File",
-			"callback": "test-create-file"
-		}
-	]
+	"commands": []
 } 

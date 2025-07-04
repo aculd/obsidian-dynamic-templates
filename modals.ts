@@ -1,6 +1,5 @@
 import { App, Modal, Notice } from 'obsidian';
-// @ts-ignore: errors.ts is a JS utility, not a TS module
-import { InputError, handleError } from '../errors';
+import { InputError, handleError } from './errors';
 
 // Interface definitions for modal parameters
 export interface TextPromptModalParams {
