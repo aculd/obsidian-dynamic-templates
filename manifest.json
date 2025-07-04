@@ -1,0 +1,17 @@
+{
+	"id": "obsidian-dynamic-templates",
+	"name": "Obsidian Dynamic Templates",
+	"version": "1.0.0",
+	"minAppVersion": "0.15.0",
+	"description": "A modular, extensible system for dynamic resource and note templates in Obsidian.",
+	"author": "Your Name",
+	"authorUrl": "https://github.com/aculd",
+	"isDesktopOnly": false,
+	"commands": [
+		{
+			"id": "test-create-file",
+			"name": "Test: Create File",
+			"callback": "test-create-file"
+		}
+	]
+} 
