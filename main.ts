@@ -70,34 +70,6 @@ export default class ObsidianUriHandlerPlugin extends Plugin {
 			}
 		});
 
-		// Register the Test: Create File command from uri-handler.ts
-		this.addCommand({
-			id: "test-create-file",
-			name: "Test: Create File",
-			callback: async () => {
-				const { FileOperations } = await import("./test-vault/test-vault/file-operations");
-				const fileOperator = new FileOperations(this.app);
-				const file = await fileOperator.createFile("Test.md", "Test file.");
-				// @ts-ignore
-				if (file && file instanceof this.app.vault.constructor.TFile) {
-					new Notice("File created successfully.");
-				} else {
-					new Notice("File creation failed.");
-				}
-			}
-		});
-
-		// Add a command to run the file-operations-test.ts test suite
-		this.addCommand({
-			id: 'run-file-operations-tests',
-			name: 'Run File Operations Tests',
-			callback: async () => {
-				const { runFileOperationsTests } = await import('./tests/file-operations-test');
-				await runFileOperationsTests(this.app);
-				new Notice('File Operations Test Results written to file-operations-test.md');
-			}
-		});
-
 		// This adds a settings tab so the user can configure various aspects of the plugin
 		this.addSettingTab(new ObsidianUriHandlerSettingTab(this.app, this));
 
@@ -117,94 +89,6 @@ export default class ObsidianUriHandlerPlugin extends Plugin {
 				await this.handleUrlParams(params);
 			} catch (e) {
 				new Notice(`Failed to execute createUrlFileWithParams: ${e.message}`);
-			}
-		});
-
-		// Add a test command to simulate a URL handler call
-		this.addCommand({
-			id: 'test-url-handler',
-			name: 'Test URL Handler (Resource)',
-			callback: async () => {
-				try {
-					new Notice('🚀 Starting URL handler test with Resource type...');
-					await this.handleUrlParams({
-						type: 'Resource',
-						url: 'https://www.google.com',
-						title: 'Google Search Engine'
-					});
-				} catch (e) {
-					new Notice(`❌ Failed to execute URL handler: ${e.message}`);
-					console.error('URL Handler Error:', e);
-				}
-			}
-		});
-
-		// Add a command to test the modular create-url-file flow
-		this.addCommand({
-			id: 'test-url-handler-modular',
-			name: 'Test URL Handler (Modular)',
-			callback: async () => {
-				try {
-					new Notice('🚀 Starting modular URL handler test...');
-					const type = 'Resource';
-					const scriptPath = `./Scripts/${type}.js`;
-					let createUrlFileWithParamsModular;
-					try {
-						createUrlFileWithParamsModular = require(scriptPath).createUrlFileWithParamsModular;
-					} catch (e) {
-						new Notice(`❌ Could not load script: ${scriptPath}`);
-						console.error('Script load error:', e);
-						return;
-					}
-					const result = await createUrlFileWithParamsModular(this.app, {
-						type,
-						url: 'https://www.example.com',
-						title: 'Example Modular'
-					});
-					if (result) {
-						new Notice('✅ Modular resource file created successfully!');
-					} else {
-						new Notice('❌ Modular resource file creation cancelled or failed.');
-					}
-				} catch (e) {
-					new Notice(`❌ Failed to execute modular URL handler: ${e.message}`);
-					console.error('Modular URL Handler Error:', e);
-				}
-			}
-		});
-
-		// Add a command to test the modular Wishlist item creator
-		this.addCommand({
-			id: 'test-wishlist-modular',
-			name: 'Test Wishlist Item Creator (Modular)',
-			callback: async () => {
-				try {
-					new Notice('🚀 Starting modular Wishlist item creator...');
-					const wishlistTemplate = new WishlistTemplate();
-					await wishlistTemplate.createTemplatedFile(this.app, { title: 'My Wishlist Item' });
-				} catch (e) {
-					new Notice(`❌ Failed to execute modular Wishlist item creator: ${e.message}`);
-					console.error('Modular Wishlist Error:', e);
-				}
-			}
-		});
-
-		// Add a command to test the WishlistTemplate class
-		this.addCommand({
-			id: 'test-wishlist-template',
-			name: 'Test Wishlist Template',
-			callback: async () => {
-				try {
-					new Notice('🚀 Starting Wishlist Template test...');
-					const wishlistTemplate = new WishlistTemplate();
-					await wishlistTemplate.createTemplatedFile(this.app, {
-						title: 'Wishlist Test Item',
-						url: 'https://www.example.com'
-					});
-				} catch (e) {
-					new Notice(`❌ Failed to execute Wishlist Template: ${e.message}`);
-					console.error('Wishlist Template Error:', e);
-				}
 			}
 		});
 
