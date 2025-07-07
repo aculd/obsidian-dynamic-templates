@@ -1,5 +1,15 @@
-import { Notice, App } from 'obsidian';
+import { App } from 'obsidian';
 import { handleError, showSuccess } from './errors';
+import { createTextPromptModal, promptWithRetry } from './modals';
+import * as fs from 'fs';
+import * as path from 'path';
+import * as modals from './modals';
+import * as errors from './errors';
+
+// NOTE: This file assumes it is running in a Node.js context (not browser/Obsidian sandbox)
+// If using TypeScript, ensure @types/node is installed for type support
+// If __dirname is not defined, fallback to process.cwd()
+declare var __dirname: string;
 
 export interface TemplateMetadata {
     name: string;
@@ -25,6 +35,10 @@ export abstract class Template {
         this._RESOURCE_TEMPLATE = content;
     }
 
+    // Attach all modal and error utilities as static properties
+    static modals = modals;
+    static errors = errors;
+
     /**
      * Abstract: must be implemented by subclasses.
      * Must be called with params containing at least 'title', 'url', and 'type'.
@@ -44,9 +58,7 @@ export abstract class Template {
      */
     async createManualTemplate(app: App, selectedType: string): Promise<boolean> {
         try {
-            // Import modal utilities
-            const { createTextPromptModal, promptWithRetry } = require('./modals');
-            
+            // Use statically imported modal utilities
             // 1. Prompt for URL
             const url = await promptWithRetry(
                 (args: any) => createTextPromptModal(args),
@@ -177,5 +189,37 @@ export abstract class Template {
             handleError(error, 'writeToFile');
             return false;
         }
+    }
+
+    // Static utility to find the plugin config path
+    static findConfigPath() {
+        let dir = (typeof __dirname !== 'undefined') ? __dirname : process.cwd();
+        while (dir !== path.parse(dir).root) {
+            const configPath = path.join(dir, '.obsidian', 'plugins', 'dynamic-templates', '.config');
+            if (fs.existsSync(configPath)) return configPath;
+            dir = path.dirname(dir);
+        }
+        throw new Error('Could not find .config for dynamic-templates plugin');
+    }
+
+    // Static utility to get the plugin path from config
+    static getPluginPath() {
+        const configPath = this.findConfigPath();
+        const config = fs.readFileSync(configPath, 'utf8');
+        const match = config.match(/^PLUGIN_PATH=(.*)$/m);
+        if (!match) throw new Error('PLUGIN_PATH not found in .config');
+        return match[1];
+    }
+
+    // Static utility to get modals
+    static getModals() {
+        const pluginPath = this.getPluginPath();
+        return require(path.join(pluginPath, 'modals.js'));
+    }
+
+    // Static utility to get Template (self)
+    static getTemplate() {
+        const pluginPath = this.getPluginPath();
+        return require(path.join(pluginPath, 'Template.js'));
     }
 } 

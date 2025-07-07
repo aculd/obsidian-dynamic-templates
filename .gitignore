@@ -124,3 +124,33 @@ Icon?
 .Trash-*
 DEVELOPMENT.md
 LEARNING-EXERCISE.md
+
+# Node modules
+node_modules/
+
+# Build output
+dist/
+main.js
+modals.js
+
+# TypeScript
+*.tsbuildinfo
+
+# Logs
+*.log
+
+# System files
+.DS_Store
+Thumbs.db
+
+# Obsidian plugin test vault
+/test-vault/
+
+# Ignore all JS and map files except main.js and modals.js
+!main.js
+!modals.js
+*.js
+*.js.map
+
+# Ignore esbuild cache
+.esbuild/
