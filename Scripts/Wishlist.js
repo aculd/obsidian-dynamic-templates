@@ -1,13 +1,7 @@
 // Modular Wishlist Item Creator for Obsidian
 // Uses only Obsidian API and modular modal utilities
-import {
-  createTextPromptModal,
-  createSelectPromptModal,
-  createTextareaPromptModal,
-  promptWithRetry
-} from '../modals';
-import { Template } from '../Template';
-import { handleError, InputError } from '../errors';
+
+const { Template } = require(TEMPLATE_PATH);
 
 const WISHLIST_TEMPLATE_CONTENT = `---
 tags: [wishlist]
@@ -34,7 +28,7 @@ url: {{URL}}
 {{THOUGHTS_SECTION}}
 `;
 
-export class WishlistTemplate extends Template {
+class WishlistTemplate extends Template {
     constructor() {
         super();
         this.setResourceTemplate(WISHLIST_TEMPLATE_CONTENT);
@@ -176,7 +170,4 @@ async function getDynamicCategories(app, defaultCategories) {
     });
 }
 
-// Export for external use
-export default {
-    WishlistTemplate
-};
+module.exports = { WishlistTemplate };

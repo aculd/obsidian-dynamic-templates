@@ -1,6 +1,5 @@
-import { promptForTitle, promptForTags, promptForImportance, promptForDescription, promptWithRetry, createSelectPromptModal } from '../modals';
-import { Template } from '../Template';
-import { handleError, InputError } from '../errors';
+const { Template } = require(TEMPLATE_PATH);
+
 
 const RESOURCE_TEMPLATE_CONTENT = `---
 tags: [resource, web-archive{{TAGS}}]
@@ -27,7 +26,7 @@ importance: {{IMPORTANCE}}
 
 _🤖 Generated on {{GENERATED_ON}}_`;
 
-export class ResourceTemplate extends Template {
+class ResourceTemplate extends Template {
     constructor() {
         super();
         this.setResourceTemplate(RESOURCE_TEMPLATE_CONTENT);
@@ -149,3 +148,5 @@ export class ResourceTemplate extends Template {
         }
     }
 }
+
+module.exports = { ResourceTemplate };

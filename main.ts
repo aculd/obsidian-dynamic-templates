@@ -1,10 +1,11 @@
-import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting } from 'obsidian';
-import { TFile, normalizePath } from 'obsidian';
+import { App, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting, FileSystemAdapter } from 'obsidian';
 import { exec } from 'child_process';
-// @ts-ignore
-import { WishlistTemplate } from './Scripts/Wishlist';
 import { TemplateMetadata } from './Template';
 import * as fs from 'fs';
+import { createSelectPromptModal, promptWithRetry, createTextPromptModal, createTextareaPromptModal, createTagsPromptModal, promptForTitle, promptForTags, promptForImportance, promptForDescription } from './modals';
+import * as path from 'path';
+import * as vm from 'vm';
+import { readConfig, writeConfig, updateConfig, deleteFile, readFile, writeFile, updateFile, FolderSuggest } from './utils';
 
 // Type definitions for better type safety
 interface UrlParams {
@@ -30,6 +31,9 @@ const DEFAULT_SETTINGS: ObsidianDynamicTemplatesSettings = {
 	scriptsDirectory: 'Scripts'
 }
 
+// Add Node.js type import for require
+// @ts-ignore
+
 export default class ObsidianDynamicTemplatesPlugin extends Plugin {
 	settings: ObsidianDynamicTemplatesSettings;
 	urlParams: Record<string, string | string[]>;
@@ -37,6 +41,33 @@ export default class ObsidianDynamicTemplatesPlugin extends Plugin {
 
 	async onload() {
 		await this.loadSettings();
+		this.writeFullConfig();
+
+		// Always (re)write .config with correct values on load
+		try {
+			const adapter = this.app.vault.adapter;
+			let vaultPath: string | null = null;
+			if (adapter instanceof FileSystemAdapter) {
+				vaultPath = adapter.getBasePath();
+			}
+			if (vaultPath) {
+				const pluginPath = path.join(vaultPath, '.obsidian', 'plugins', 'dynamic-templates');
+				const configPath = path.join(pluginPath, '.config');
+				const scriptsDir = this.settings.scriptsDirectory || 'Scripts';
+				const scriptPath = path.join(vaultPath, scriptsDir);
+				const templateRelPath = path.relative(scriptPath, path.join(pluginPath, 'Template.js'));
+				const configContent = [
+					`VAULT_PATH=${vaultPath}`,
+					`PLUGIN_PATH=${pluginPath}`,
+					`SCRIPT_PATH=${scriptPath}`,
+					`TEMPLATE_PATH=Template.js`,
+					`TEMPLATE_REL_PATH=${templateRelPath}`
+				].join('\n');
+				fs.writeFileSync(configPath, configContent, 'utf8');
+			}
+		} catch (e) {
+			console.error('Failed to create .config file:', e);
+		}
 
 		// This adds a settings tab so the user can configure various aspects of the plugin
 		this.addSettingTab(new ObsidianDynamicTemplatesSettingTab(this.app, this));
@@ -62,7 +93,7 @@ export default class ObsidianDynamicTemplatesPlugin extends Plugin {
 
 		// Dynamic Template Discovery and Command Registration
 		const registerDynamicTemplateCommands = () => {
-			const scriptsDir = `./${this.settings.scriptsDirectory}`;
+			const scriptsDir = path.join((this.app.vault.adapter as any).basePath, this.settings.scriptsDirectory);
 			let templateFiles: string[] = [];
 			try {
 				templateFiles = fs.readdirSync(scriptsDir).filter(f => f.endsWith('.js'));
@@ -73,10 +104,9 @@ export default class ObsidianDynamicTemplatesPlugin extends Plugin {
 			}
 			for (const file of templateFiles) {
 				const type = file.replace('.js', '');
-				let module, TemplateClass;
+				let TemplateClass;
 				try {
-					module = require(`${scriptsDir}/${file}`);
-					TemplateClass = module[`${type}Template`];
+					TemplateClass = runTemplateURLWithInjection(this.app, this.settings, type, 'https://example.com', `${type} Example`).constructor;
 				} catch (e) {
 					new Notice(`Failed to load template: ${file}`);
 					console.error(e);
@@ -99,26 +129,22 @@ export default class ObsidianDynamicTemplatesPlugin extends Plugin {
 						name: `Create ${type} File (Dynamic)`,
 						callback: async () => {
 							try {
-								const templateInstance = new TemplateClass();
-								
+								const templateInstance = runTemplateURLWithInjection(this.app, this.settings, type, 'https://example.com', `${type} Example`);
 								// Validate template if validation methods exist
 								if (templateInstance.validateMetadata && !templateInstance.validateMetadata()) {
 									new Notice(`Template ${type} failed metadata validation`);
 									return;
 								}
-								
 								const params = {
 									title: `${type} Example`,
 									url: 'https://example.com',
 									type
 								};
-								
 								// Validate parameters if validation method exists
 								if (templateInstance.validateParams && !templateInstance.validateParams(params)) {
 									new Notice(`Template ${type} failed parameter validation`);
 									return;
 								}
-								
 								await templateInstance.createTemplatedFile(this.app, params);
 							} catch (e) {
 								new Notice(`Failed to create ${type} file: ${e.message}`);
@@ -167,6 +193,7 @@ export default class ObsidianDynamicTemplatesPlugin extends Plugin {
 
 	async saveSettings() {
 		await this.saveData(this.settings);
+		this.writeFullConfig();
 	}
 
 	// Helper to run a Node.js script with params as JSON
@@ -198,10 +225,10 @@ export default class ObsidianDynamicTemplatesPlugin extends Plugin {
 			const templateClassName = `${type.charAt(0).toUpperCase() + type.slice(1)}Template`;
 			
 			try {
-				// Try to load template class using require instead of dynamic import
+				// @ts-ignore
 				let templateModule, TemplateClass;
 				try {
-					templateModule = require(`./${this.settings.scriptsDirectory}/${templateFile}`);
+					templateModule = eval('require')(`${path.join((this.app.vault.adapter as any).basePath, this.settings.scriptsDirectory)}/${templateFile}`);
 					TemplateClass = templateModule[templateClassName];
 				} catch (e) {
 					console.error(`Failed to load template module ${templateFile}:`, e);
@@ -237,46 +264,10 @@ export default class ObsidianDynamicTemplatesPlugin extends Plugin {
 				}
 			} catch (e) {
 				console.error(`Failed to use template for type ${type}:`, e);
-				// Fallback to old method
-				await this.fallbackCreateUrlFile(type, url, title);
+				new Notice(`❌ Failed to create resource file for type=${type}: ${e.message}`);
 			}
 		} else {
 			new Notice('❌ Missing required parameters: type, url, title');
-		}
-	}
-
-	// Fallback method for when template-based creation fails
-	async fallbackCreateUrlFile(type: string, url: string, title: string) {
-		let createUrlFile;
-		let found = false;
-		try {
-			// Try to load from local Scripts folder first
-			createUrlFile = require(`./${this.settings.scriptsDirectory}/create-url-file.js`).createUrlFileWithParams;
-			found = true;
-		} catch (e) {
-			console.log('Script not found in local Scripts folder:', e.message);
-		}
-		if (!found) {
-			try {
-				// Try to load from vault Scripts folder
-				const vaultPath = (this.app.vault.adapter as any).basePath;
-				const scriptPath = `${vaultPath}/${this.settings.scriptsDirectory}/create-url-file.js`;
-				createUrlFile = require(scriptPath).createUrlFileWithParams;
-				found = true;
-			} catch (e) {
-				console.log('Script not found in vault Scripts folder:', e.message);
-			}
-		}
-		if (!found) {
-			new Notice('❌ No template or fallback script found for this type');
-			return;
-		}
-		// Call the function with the proper parameters object structure
-		const result = await createUrlFile(this.app, { type, url, title });
-		if (result) {
-			new Notice(`✅ Resource file created successfully for type=${type} (fallback)`);
-		} else {
-			new Notice(`❌ Failed to create resource file for type=${type} (fallback)`);
 		}
 	}
 
@@ -338,14 +329,10 @@ export default class ObsidianDynamicTemplatesPlugin extends Plugin {
 	// Method to show template selection modal and create file with manual URL input
 	async showTemplateSelectionModal() {
 		try {
-			// Import modal utilities
-			const { createSelectPromptModal, promptWithRetry } = await import('./modals');
-			
 			// Get available templates by scanning the scripts directory
-			const scriptsDir = `./${this.settings.scriptsDirectory}`;
+			const scriptsDir = path.join((this.app.vault.adapter as any).basePath, this.settings.scriptsDirectory);
 			let templateFiles: string[] = [];
 			try {
-				const fs = require('fs');
 				templateFiles = fs.readdirSync(scriptsDir).filter((f: string) => f.endsWith('.js'));
 			} catch (e) {
 				new Notice('Failed to scan Scripts folder for templates.');
@@ -359,14 +346,14 @@ export default class ObsidianDynamicTemplatesPlugin extends Plugin {
 			}
 
 			// Create options for the dropdown
-			const templateOptions = [];
+			const templateOptions: Array<{ value: string; text: string }> = [];
 			for (const file of templateFiles) {
 				const type = file.replace('.js', '');
 				const templateClassName = `${type.charAt(0).toUpperCase() + type.slice(1)}Template`;
 				
 				try {
-					// Try to load template class to get metadata
-					const templateModule = require(`./${this.settings.scriptsDirectory}/${file}`);
+					// @ts-ignore
+					const templateModule = eval('require')(`${path.join((this.app.vault.adapter as any).basePath, this.settings.scriptsDirectory)}/${file}`);
 					const TemplateClass = templateModule[templateClassName];
 					
 					if (TemplateClass) {
@@ -422,7 +409,8 @@ export default class ObsidianDynamicTemplatesPlugin extends Plugin {
 			const templateClassName = `${selectedType.charAt(0).toUpperCase() + selectedType.slice(1)}Template`;
 			
 			try {
-				const templateModule = require(`./${this.settings.scriptsDirectory}/${templateFile}`);
+				// @ts-ignore
+				const templateModule = eval('require')(`${path.join((this.app.vault.adapter as any).basePath, this.settings.scriptsDirectory)}/${templateFile}`);
 				const TemplateClass = templateModule[templateClassName];
 				
 				if (TemplateClass) {
@@ -453,6 +441,29 @@ export default class ObsidianDynamicTemplatesPlugin extends Plugin {
 			console.error(error);
 		}
 	}
+
+	private writeFullConfig() {
+		const adapter = this.app.vault.adapter;
+		let vaultPath: string | null = null;
+		if (adapter instanceof FileSystemAdapter) {
+			vaultPath = adapter.getBasePath();
+		}
+		if (vaultPath) {
+			const pluginPath = path.join(vaultPath, '.obsidian', 'plugins', 'dynamic-templates');
+			const configPath = path.join(pluginPath, '.config');
+			const scriptsDir = this.settings.scriptsDirectory || 'Scripts';
+			const scriptPath = path.join(vaultPath, scriptsDir);
+			const templateRelPath = path.relative(scriptPath, path.join(pluginPath, 'Template.js'));
+			const configContent = [
+				`VAULT_PATH=${vaultPath}`,
+				`PLUGIN_PATH=${pluginPath}`,
+				`SCRIPT_PATH=${scriptPath}`,
+				`TEMPLATE_PATH=Template.js`,
+				`TEMPLATE_REL_PATH=${templateRelPath}`
+			].join('\n');
+			fs.writeFileSync(configPath, configContent, 'utf8');
+		}
+	}
 }
 
 class SampleModal extends Modal {
@@ -481,18 +492,97 @@ class ObsidianDynamicTemplatesSettingTab extends PluginSettingTab {
 
 	display(): void {
 		const {containerEl} = this;
-
 		containerEl.empty();
 
-		new Setting(containerEl)
+		const setting = new Setting(containerEl)
 			.setName('Scripts Directory')
-			.setDesc('Directory where template scripts are located (relative to plugin folder)')
-			.addText(text => text
-				.setPlaceholder('Scripts')
-				.setValue(this.plugin.settings.scriptsDirectory)
-				.onChange(async (value) => {
-					this.plugin.settings.scriptsDirectory = value || 'Scripts';
-					await this.plugin.saveSettings();
-				}));
+			.setDesc('Directory where template scripts are located (relative to vault root)');
+
+		const input = document.createElement('input');
+		input.type = 'text';
+		input.placeholder = 'Scripts';
+		input.value = this.plugin.settings.scriptsDirectory;
+		input.style.width = '70%';
+		setting.controlEl.appendChild(input);
+
+		const errorEl = document.createElement('div');
+		errorEl.style.color = 'red';
+		errorEl.style.marginTop = '4px';
+		setting.controlEl.appendChild(errorEl);
+
+		const validate = (val: string) => {
+			const folder = this.app.vault.getAbstractFileByPath(val);
+			if (!folder || folder.constructor.name !== 'TFolder') {
+				errorEl.textContent = `Could not find folder: ${val}`;
+				return false;
+			} else {
+				errorEl.textContent = '';
+				return true;
+			}
+		};
+
+		input.addEventListener('input', async (e) => {
+			const val = input.value.trim() || 'Scripts';
+			this.plugin.settings.scriptsDirectory = val;
+			validate(val);
+			await this.plugin.saveSettings();
+		});
+
+		// FolderSuggest modal on focus
+		input.addEventListener('focus', () => {
+			new FolderSuggest(this.app, (folder) => {
+				input.value = folder.path;
+				this.plugin.settings.scriptsDirectory = folder.path;
+				validate(folder.path);
+				this.plugin.saveSettings();
+			}).open();
+		});
+
+		// Initial validation
+		validate(input.value);
 	}
+}
+
+function runTemplateURLWithInjection(app: any, settings: any, type: string, url: string, title: string) {
+	const pluginBasePath = (app.vault.adapter as any).basePath;
+	const pluginPath = path.join(pluginBasePath, '.obsidian', 'plugins', 'dynamic-templates');
+	const config = readConfig(path.join(pluginPath, '.config'));
+	if (!config.TEMPLATE_PATH) throw new Error('TEMPLATE_PATH not found in .config');
+	const scriptPath = path.join(pluginBasePath, settings.scriptsDirectory, `${type}.js`);
+	const scriptCode = readFile(scriptPath);
+	const context = {
+		require,
+		module,
+		__dirname: path.dirname(scriptPath),
+		TEMPLATE_PATH: path.join(pluginPath, config.TEMPLATE_PATH),
+	};
+	vm.createContext(context);
+	const script = new vm.Script(scriptCode, { filename: scriptPath });
+	script.runInContext(context);
+	const templateClassName = `${type.charAt(0).toUpperCase() + type.slice(1)}Template`;
+	const TemplateClass = context.module.exports[templateClassName];
+	if (!TemplateClass) throw new Error(`Template class ${templateClassName} not found in ${scriptPath}`);
+	return new TemplateClass();
+}
+
+function runTemplateManualWithInjection(app: any, settings: any, selectedType: string) {
+	const pluginBasePath = (app.vault.adapter as any).basePath;
+	const pluginPath = path.join(pluginBasePath, '.obsidian', 'plugins', 'dynamic-templates');
+	const config = readConfig(path.join(pluginPath, '.config'));
+	if (!config.TEMPLATE_PATH) throw new Error('TEMPLATE_PATH not found in .config');
+	const scriptPath = path.join(pluginBasePath, settings.scriptsDirectory, `${selectedType}.js`);
+	const scriptCode = readFile(scriptPath);
+	const context = {
+		require,
+		module,
+		__dirname: path.dirname(scriptPath),
+		TEMPLATE_PATH: path.join(pluginPath, config.TEMPLATE_PATH),
+	};
+	vm.createContext(context);
+	const script = new vm.Script(scriptCode, { filename: scriptPath });
+	script.runInContext(context);
+	const templateClassName = `${selectedType.charAt(0).toUpperCase() + selectedType.slice(1)}Template`;
+	const TemplateClass = context.module.exports[templateClassName];
+	if (!TemplateClass) throw new Error(`Template class ${templateClassName} not found in ${scriptPath}`);
+	return new TemplateClass();
 } 
