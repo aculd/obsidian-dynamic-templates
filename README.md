@@ -373,10 +373,32 @@ obsidian-dynamic-templates/
 ├── modals.ts            # Modular modal utilities (text, dropdown, textarea, retry logic)
 ├── errors.ts            # Centralized error types and error handling
 ├── Scripts/             # Folder for all template scripts (auto-discovered)
-├── tests/               # Test suites and helpers
 ├── styles.css           # Scoped plugin styles
+├── utils.ts             # File operations, helpers, FolderSuggest
 ├── ...                  # Other build/config files
 ```
+
+---
+
+## 📦 Summary Table
+
+| File         | Responsibility                                              | Imported by main.ts? |
+|--------------|------------------------------------------------------------|----------------------|
+| main.ts      | Entry point, runtime, injection, logic, coordination       | Yes (self)           |
+| Template.ts  | Base class, all script needs, imports modals/errors        | Yes                 |
+| modals.ts    | Modal utilities                                            | By Template          |
+| errors.ts    | Error utilities                                            | By Template          |
+| utils.ts     | File operations, helpers, FolderSuggest                    | Yes                 |
+
+---
+
+## 🧩 Modular Architecture & Dynamic Imports
+
+- **Highly Modular:** All template scripts now extend a single `Template` base class. Scripts themselves are minimal—no direct imports of modal or error utilities.
+- **Dynamic Imports via Config:** The `Template` class dynamically loads all modal and error utilities using paths from the `.config` file. This means scripts always get the correct, up-to-date dependencies, regardless of plugin location or structure changes.
+- **Minimal Script Boilerplate:** Scripts only need to extend `Template` and implement `createTemplatedFile` and `promptForFields`. All modal prompts, error handling, and file operations are inherited or accessed via static properties/methods on `Template`.
+- **Robustness:** The `.config` file is always fully rewritten on load and settings change, keeping all paths (SCRIPT_PATH, TEMPLATE_REL_PATH, etc.) up to date and consistent. Dynamic script loading uses VM injection helpers, guaranteeing `TEMPLATE_PATH` and other globals are always available.
+- **Settings UX:** The Scripts Directory setting uses a folder-only suggest modal (FolderSuggest) for robust folder selection, with immediate error feedback if the folder does not exist.
 
 ---
 

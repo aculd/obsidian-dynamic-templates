@@ -154,3 +154,4 @@ Thumbs.db
 
 # Ignore esbuild cache
 .esbuild/
+build.ps1
