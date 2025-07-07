@@ -1,5 +1,8 @@
-# Build the plugin
-npm run build
+# Build the plugin (ensure TypeScript is compiled)
+npm run build  # This must output Template.js from Template.ts
+
+# NOTE: Scripts in the Scripts/ folder require TEMPLATE_PATH to be dynamically injected at runtime.
+# The loader must provide the correct path to the compiled Template.js file.
 
 # Define plugin and scripts paths
 $pluginPath = "C:\Users\a\dev\obsidian-template-dynamic\obsidian-uri-handler\test-vault\test-vault\.obsidian\plugins\dynamic-templates\"
@@ -35,3 +38,5 @@ Get-ChildItem -Path $vaultScripts | Where-Object { $_.Extension -ne '.js' } | Re
 
 # Copy only .js files from Scripts/ to test vault Scripts folder
 Get-ChildItem -Path "Scripts" -Filter "*.js" | ForEach-Object { Copy-Item -Force $_.FullName $vaultScripts }
+
+# IMPORTANT: The loader that runs scripts in Scripts/ must inject TEMPLATE_PATH to point to Template.js in the plugin directory.
